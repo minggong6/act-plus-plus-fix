@@ -3,7 +3,7 @@ import os
 
 ### Task parameters
 # DATA_DIR = '/home/zfu/interbotix_ws/src/act/data' if os.getlogin() == 'zfu' else '/scr/tonyzhao/datasets'
-DATA_DIR = '/home/alvin/data/aloha/'
+DATA_DIR = '/home/dianrobot/PycharmProjects/act-plus-plus-fixed/data_set'
 SIM_TASK_CONFIGS = {
     'sim_transfer_cube_scripted':{
         'dataset_dir': DATA_DIR + '/sim_transfer_cube_scripted',
