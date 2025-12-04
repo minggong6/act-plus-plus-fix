@@ -6,6 +6,8 @@ import pickle
 import fnmatch
 import cv2
 from time import time
+
+from pyasn1_modules.rfc4357 import id_Gost28147_89_CryptoPro_RIC_1_ParamSet
 from torch.utils.data import TensorDataset, DataLoader
 import torchvision.transforms as transforms
 
@@ -48,101 +50,189 @@ class EpisodicDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         episode_id, start_ts = self._locate_transition(index)
         dataset_path = self.dataset_path_list[episode_id]
-        try:
-            # print(dataset_path)
-            with h5py.File(dataset_path, 'r') as root:
-                try: # some legacy data does not have this attribute
-                    is_sim = root.attrs['sim']
-                except:
-                    is_sim = False
-                compressed = root.attrs.get('compress', False)
-                if '/base_action' in root:
-                    base_action = root['/base_action'][()]
-                    base_action = preprocess_base_action(base_action)
-                    action = np.concatenate([root['/action'][()], base_action], axis=-1)
-                else:  
-                    action = root['/action'][()]
-                    dummy_base_action = np.zeros([action.shape[0], 2])
-                    action = np.concatenate([action, dummy_base_action], axis=-1)
-                original_action_shape = action.shape
-                episode_len = original_action_shape[0]
-                # get observation at start_ts only
-                qpos = root['/observations/qpos'][start_ts]
-                qvel = root['/observations/qvel'][start_ts]
-                image_dict = dict()
-                for cam_name in self.camera_names:
-                    image_dict[cam_name] = root[f'/observations/images/{cam_name}'][start_ts]
-                
-                if compressed:
-                    for cam_name in image_dict.keys():
-                        decompressed_image = cv2.imdecode(image_dict[cam_name], 1)
-                        image_dict[cam_name] = np.array(decompressed_image)
-                
-                # get all actions after and including start_ts
-                if is_sim:
-                    action = action[start_ts:]
-                    action_len = episode_len - start_ts
-                else:
-                    action = action[max(0, start_ts - 1):] # hack, to make timesteps more aligned
-                    action_len = episode_len - max(0, start_ts - 1) # hack, to make timesteps more aligned
+        with h5py.File(dataset_path, 'r') as root:
+            try: # some legacy data does not have this attribute
+                is_sim = root.attrs['sim']
+            except:
+                is_sim = False
+            compressed = root.attrs.get('compress', False)
 
-            # self.is_sim = is_sim
-            padded_action = np.zeros((self.max_episode_len, original_action_shape[1]), dtype=np.float32)
-            padded_action[:action_len] = action
-            is_pad = np.zeros(self.max_episode_len)
-            is_pad[action_len:] = 1
 
-            padded_action = padded_action[:self.chunk_size]
-            is_pad = is_pad[:self.chunk_size]
-
-            # new axis for different cameras
-            all_cam_images = []
+            action = root['/action'][()]
+            original_action_shape = action.shape
+            episode_len = original_action_shape[0]
+            # get observation at start_ts only
+            qpos = root['/observations/qpos'][start_ts]
+            qvel = root['/observations/qvel'][start_ts]
+            image_dict = dict()
             for cam_name in self.camera_names:
-                all_cam_images.append(image_dict[cam_name])
-            all_cam_images = np.stack(all_cam_images, axis=0)
+                image_dict[cam_name] = root[f'/observations/images/{cam_name}'][start_ts]
 
-            # construct observations
-            image_data = torch.from_numpy(all_cam_images)
-            qpos_data = torch.from_numpy(qpos).float()
-            action_data = torch.from_numpy(padded_action).float()
-            is_pad = torch.from_numpy(is_pad).bool()
+            if compressed:
+                for cam_name in image_dict.keys():
+                    decompressed_image = cv2.imdecode(image_dict[cam_name], 1)
+                    image_dict[cam_name] = np.array(decompressed_image)
 
-            # channel last
-            image_data = torch.einsum('k h w c -> k c h w', image_data)
+            # get all actions after and including start_ts
+            # --- 修改开始 ---
+            # 确保动作序列长度固定为 chunk_size
+            action_len = action.shape[0]
+            padded_action = np.zeros((self.chunk_size, original_action_shape[1]), dtype=np.float32)
+            # 截断或填充动作序列
+            copy_len = min(action_len, self.chunk_size)
+            padded_action[:copy_len] = action[:copy_len]
 
-            # augmentation
-            if self.transformations is None:
-                print('Initializing transformations')
-                original_size = image_data.shape[2:]
-                ratio = 0.95
-                self.transformations = [
-                    transforms.RandomCrop(size=[int(original_size[0] * ratio), int(original_size[1] * ratio)]),
-                    transforms.Resize(original_size, antialias=True),
-                    transforms.RandomRotation(degrees=[-5.0, 5.0], expand=False),
-                    transforms.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5) #, hue=0.08)
-                ]
+            # 创建 is_pad 掩码
+            is_pad = np.zeros(self.chunk_size, dtype=bool)
+            is_pad[copy_len:] = True
+            # --- 修改结束 ---
 
-            if self.augment_images:
-                for transform in self.transformations:
-                    image_data = transform(image_data)
+        # self.is_sim = is_sim
+        padded_action = np.zeros((self.max_episode_len, original_action_shape[1]), dtype=np.float32)
+        padded_action[:action_len] = action
+        is_pad = np.zeros(self.max_episode_len)
+        is_pad[action_len:] = 1
 
-            # normalize image and change dtype to float
-            image_data = image_data / 255.0
+        padded_action = padded_action[:self.chunk_size]
+        is_pad = is_pad[:self.chunk_size]
 
-            if self.policy_class == 'Diffusion':
-                # normalize to [-1, 1]
-                action_data = ((action_data - self.norm_stats["action_min"]) / (self.norm_stats["action_max"] - self.norm_stats["action_min"])) * 2 - 1
+        # new axis for different cameras
+        all_cam_images = []
+        for cam_name in self.camera_names:
+            all_cam_images.append(image_dict[cam_name])
+        all_cam_images = np.stack(all_cam_images, axis=0)
+
+        # construct observations
+        image_data = torch.from_numpy(all_cam_images)
+        qpos_data = torch.from_numpy(qpos).float()
+        action_data = torch.from_numpy(padded_action).float()
+        is_pad = torch.from_numpy(is_pad).bool()
+
+        # channel last
+        image_data = torch.einsum('k h w c -> k c h w', image_data)
+
+        # augmentation
+        if self.transformations is None:
+            print('Initializing transformations')
+            original_size = image_data.shape[2:]
+            ratio = 0.95
+            self.transformations = [
+                transforms.RandomCrop(size=[int(original_size[0] * ratio), int(original_size[1] * ratio)]),
+                transforms.Resize(original_size, antialias=True),
+                transforms.RandomRotation(degrees=[-5.0, 5.0], expand=False),
+                transforms.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5) #, hue=0.08)
+            ]
+
+        if self.augment_images:
+            for transform in self.transformations:
+                image_data = transform(image_data)
+
+        # normalize image and change dtype to float
+        image_data = image_data / 255.0
+
+        if self.policy_class == 'Diffusion':
+            # normalize to [-1, 1]
+            action_data = ((action_data - self.norm_stats["action_min"]) / (self.norm_stats["action_max"] - self.norm_stats["action_min"])) * 2 - 1
+        else:
+            # normalize to mean 0 std 1
+            action_data = (action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]
+
+        qpos_data = (qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]
+
+        return image_data, qpos_data, action_data, is_pad
+
+    # utils.pyang
+
+    def __getitem__(self, index):
+        episode_id, start_ts = self._locate_transition(index)
+        dataset_path = self.dataset_path_list[episode_id]
+        with h5py.File(dataset_path, 'r') as root:
+            try:  # some legacy data does not have this attribute
+                is_sim = root.attrs['sim']
+            except:
+                is_sim = False
+            compressed = root.attrs.get('compress', False)
+
+            action = root['/action'][()]
+            original_action_shape = action.shape
+            episode_len = original_action_shape[0]
+            # get observation at start_ts only
+            qpos = root['/observations/qpos'][start_ts]
+            qvel = root['/observations/qvel'][start_ts]
+            image_dict = dict()
+            for cam_name in self.camera_names:
+                image_dict[cam_name] = root[f'/observations/images/{cam_name}'][start_ts]
+
+            if compressed:
+                for cam_name in image_dict.keys():
+                    decompressed_image = cv2.imdecode(image_dict[cam_name], 1)
+                    image_dict[cam_name] = np.array(decompressed_image)
+
+            # get all actions after and including start_ts
+            if is_sim:
+                action = action[start_ts:]
             else:
-                # normalize to mean 0 std 1
-                action_data = (action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]
+                action = action[max(0, start_ts - 1):]  # hack, to make timesteps more aligned
 
-            qpos_data = (qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]
+        # self.is_sim = is_sim
 
-        except:
-            print(f'Error loading {dataset_path} in __getitem__')
-            quit()
+        # --- 修改开始 ---
+        # 确保动作序列长度固定为 chunk_size
+        action_len = action.shape[0]
+        padded_action = np.zeros((self.chunk_size, original_action_shape[1]), dtype=np.float32)
+        # 截断或填充动作序列
+        copy_len = min(action_len, self.chunk_size)
+        padded_action[:copy_len] = action[:copy_len]
 
-        # print(image_data.dtype, qpos_data.dtype, action_data.dtype, is_pad.dtype)
+        # 创建 is_pad 掩码
+        is_pad = np.zeros(self.chunk_size, dtype=bool)
+        is_pad[copy_len:] = True
+        # --- 修改结束 ---
+
+        # new axis for different cameras
+        all_cam_images = []
+        for cam_name in self.camera_names:
+            all_cam_images.append(image_dict[cam_name])
+        all_cam_images = np.stack(all_cam_images, axis=0)
+
+        # construct observations
+        image_data = torch.from_numpy(all_cam_images)
+        qpos_data = torch.from_numpy(qpos).float()
+        action_data = torch.from_numpy(padded_action).float()
+        is_pad = torch.from_numpy(is_pad).bool()
+
+        # channel last
+        image_data = torch.einsum('k h w c -> k c h w', image_data)
+
+        # augmentation
+        if self.transformations is None:
+            print('Initializing transformations')
+            original_size = image_data.shape[2:]
+            ratio = 0.95
+            self.transformations = [
+                transforms.RandomCrop(size=[int(original_size[0] * ratio), int(original_size[1] * ratio)]),
+                transforms.Resize(original_size, antialias=True),
+                transforms.RandomRotation(degrees=[-5.0, 5.0], expand=False),
+                transforms.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5)  # , hue=0.08)
+            ]
+
+        if self.augment_images:
+            for transform in self.transformations:
+                image_data = transform(image_data)
+
+        # normalize image and change dtype to float
+        image_data = image_data / 255.0
+
+        if self.policy_class == 'Diffusion':
+            # normalize to [-1, 1]
+            action_data = ((action_data - self.norm_stats["action_min"]) / (
+                        self.norm_stats["action_max"] - self.norm_stats["action_min"])) * 2 - 1
+        else:
+            # normalize to mean 0 std 1
+            action_data = (action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]
+
+        qpos_data = (qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]
+
         return image_data, qpos_data, action_data, is_pad
 
 
@@ -162,8 +252,6 @@ def get_norm_stats(dataset_path_list):
                     action = np.concatenate([root['/action'][()], base_action], axis=-1)
                 else:
                     action = root['/action'][()]
-                    dummy_base_action = np.zeros([action.shape[0], 2])
-                    action = np.concatenate([action, dummy_base_action], axis=-1)
         except Exception as e:
             print(f'Error loading {dataset_path} in get_norm_stats')
             print(e)
@@ -217,8 +305,9 @@ def BatchSampler(batch_size, episode_len_l, sample_weights):
             batch.append(step_idx)
         yield batch
 
-def load_data(dataset_dir_l, name_filter, camera_names, batch_size_train, batch_size_val, chunk_size, skip_mirrored_data=False, 
+def load_data(dataset_dir_l, name_filter, camera_names, batch_size_train, batch_size_val, chunk_size, skip_mirrored_data=False,
               load_pretrain=False, policy_class=None, stats_dir_l=None, sample_weights=None, train_ratio=0.99):
+
     if type(dataset_dir_l) == str:
         dataset_dir_l = [dataset_dir_l]
     dataset_path_list_list = [find_all_hdf5(dataset_dir, skip_mirrored_data) for dataset_dir in dataset_dir_l]
@@ -230,7 +319,7 @@ def load_data(dataset_dir_l, name_filter, camera_names, batch_size_train, batch_
 
     # obtain train test split on dataset_dir_l[0]
     shuffled_episode_ids_0 = np.random.permutation(num_episodes_0)
-    train_episode_ids_0 = shuffled_episode_ids_0[:int(train_ratio * num_episodes_0)]
+    train_episode_ids_0 = shuffled_episode_ids_0[:int(train_ratio * num_episodes_0)]#####注意
     val_episode_ids_0 = shuffled_episode_ids_0[int(train_ratio * num_episodes_0):]
     train_episode_ids_l = [train_episode_ids_0] + [np.arange(num_episodes) + num_episodes_cumsum[idx] for idx, num_episodes in enumerate(num_episodes_l[1:])]
     val_episode_ids_l = [val_episode_ids_0]
@@ -257,15 +346,21 @@ def load_data(dataset_dir_l, name_filter, camera_names, batch_size_train, batch_
 
     batch_sampler_train = BatchSampler(batch_size_train, train_episode_len_l, sample_weights)
     batch_sampler_val = BatchSampler(batch_size_val, val_episode_len_l, None)
-
     # print(f'train_episode_len: {train_episode_len}, val_episode_len: {val_episode_len}, train_episode_ids: {train_episode_ids}, val_episode_ids: {val_episode_ids}')
 
     # construct dataset and dataloader
     train_dataset = EpisodicDataset(dataset_path_list, camera_names, norm_stats, train_episode_ids, train_episode_len, chunk_size, policy_class)
     val_dataset = EpisodicDataset(dataset_path_list, camera_names, norm_stats, val_episode_ids, val_episode_len, chunk_size, policy_class)
+
+    for data in train_dataset:
+        print("train_dataset_训练集张量", data[2].shape)
+        break
+    for data in val_dataset:
+        print("测试集是多少",data[2].shape)
+        break
     # train_num_workers = (8 if os.getlogin() == 'zfu' else 16) if train_dataset.augment_images else 2
     # val_num_workers = 8 if train_dataset.augment_images else 2
-    train_num_workers = 16
+    train_num_workers = 8
     val_num_workers = 8
     print(f'Augment images: {train_dataset.augment_images}, train_num_workers: {train_num_workers}, val_num_workers: {val_num_workers}')
     train_dataloader = DataLoader(train_dataset, batch_sampler=batch_sampler_train, pin_memory=True, num_workers=train_num_workers, prefetch_factor=2)
