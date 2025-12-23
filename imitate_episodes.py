@@ -58,7 +58,7 @@ def main(args):
     is_sim = task_name[:4] == 'sim_'
     # print teask name and config
     print('task_name: ', task_name)
-    if is_sim or task_name == 'all':
+    if is_sim or task_name == 'all' or 'pybullet' in task_name:
         from constants import SIM_TASK_CONFIGS
         task_config = SIM_TASK_CONFIGS[task_name]
     else:
@@ -74,7 +74,7 @@ def main(args):
     name_filter = task_config.get('name_filter', lambda n: True)
 
     # fixed parameters
-    state_dim = 14
+    state_dim = 7
     lr_backbone = 1e-5
     backbone = 'resnet18'
     if policy_class == 'ACT':
@@ -95,14 +95,15 @@ def main(args):
                          'vq': args['use_vq'],
                          'vq_class': args['vq_class'],
                          'vq_dim': args['vq_dim'],
-                         'action_dim': 16,
+                         #'action_dim': 14,
+                         'action_dim': 7,
                          'no_encoder': args['no_encoder'],
                          }
     elif policy_class == 'Diffusion':
 
         policy_config = {'lr': args['lr'],
                          'camera_names': camera_names,
-                         'action_dim': 16,
+                         'action_dim': 7,
                          'observation_horizon': 1,
                          'action_horizon': 8,
                          'prediction_horizon': args['chunk_size'],
@@ -141,7 +142,7 @@ def main(args):
         'seed': args['seed'],
         'temporal_agg': args['temporal_agg'],
         'camera_names': camera_names,
-        'real_robot': not is_sim,
+        'real_robot': not is_sim and 'pybullet' not in task_name,
         'load_pretrain': args['load_pretrain'],
         'actuator_config': actuator_config,
     }
@@ -307,6 +308,15 @@ def eval_bc(config, ckpt_name, save_episode=True, num_rollouts=50):
         from aloha_scripts.real_env import make_real_env # requires aloha
         env = make_real_env(init_node=True, setup_robots=True, setup_base=True)
         env_max_reward = 0
+    elif 'pybullet' in task_name:
+        import sys
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'pybullet', 'stage_1', 'FR_Gym'))
+        from Fr5_env import FR5_Env
+        from pybullet_env_adapter import PyBulletACTAdapter
+        
+        raw_env = FR5_Env(gui=True)
+        env = PyBulletACTAdapter(raw_env)
+        env_max_reward = 1
     else:
         from sim_env import make_sim_env
         env = make_sim_env(task_name)
@@ -443,7 +453,10 @@ def eval_bc(config, ckpt_name, save_episode=True, num_rollouts=50):
                 time4 = time.time()
                 raw_action = raw_action.squeeze(0).cpu().numpy()
                 action = post_process(raw_action)
-                target_qpos = action[:-2]
+                if 'pybullet' in task_name:
+                    target_qpos = action
+                else:
+                    target_qpos = action[:-2]
 
                 # if use_actuator_net:
                 #     assert(not temporal_agg)
@@ -537,6 +550,7 @@ def eval_bc(config, ckpt_name, save_episode=True, num_rollouts=50):
 def forward_pass(data, policy):
     image_data, qpos_data, action_data, is_pad = data
     image_data, qpos_data, action_data, is_pad = image_data.cuda(), qpos_data.cuda(), action_data.cuda(), is_pad.cuda()
+   # print('action_data shapes: ', action_data.shape)
     return policy(qpos_data, image_data, action_data, is_pad) # TODO remove None
 
 
@@ -587,14 +601,14 @@ def train_bc(train_dataloader, val_dataloader, config):
                     min_val_loss = epoch_val_loss
                     best_ckpt_info = (step, min_val_loss, deepcopy(policy.serialize()))
             for k in list(validation_summary.keys()):
-                validation_summary[f'val_{k}'] = validation_summary.pop(k)            
+                validation_summary[f'val_{k}'] = validation_summary.pop(k)
             wandb.log(validation_summary, step=step)
             print(f'Val loss:   {epoch_val_loss:.5f}')
             summary_string = ''
             for k, v in validation_summary.items():
                 summary_string += f'{k}: {v.item():.3f} '
             print(summary_string)
-                
+
         # evaluation
         if (step > 0) and (step % eval_every == 0):
             # first save then eval
@@ -614,6 +628,9 @@ def train_bc(train_dataloader, val_dataloader, config):
         loss.backward()
         optimizer.step()
         wandb.log(forward_dict, step=step) # not great, make training 1-2% slower
+
+        if step % 100 == 0:
+            print(f'Step {step}, Train Loss: {loss.item():.5f}')
 
         if step % save_every == 0:
             ckpt_path = os.path.join(ckpt_dir, f'policy_step_{step}_seed_{seed}.ckpt')

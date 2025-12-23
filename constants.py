@@ -9,7 +9,21 @@ SIM_TASK_CONFIGS = {
         'dataset_dir': DATA_DIR + '/sim_transfer_cube_scripted',
         'num_episodes': 50,
         'episode_len': 400,
-        'camera_names': ['top', 'left_wrist', 'right_wrist']
+        'camera_names': ['wrist']
+    },
+
+    'pybullet_fr5': {
+        'dataset_dir': DATA_DIR + '/sim_fr5_task',
+        'num_episodes': 50,
+        'episode_len': 400,
+        'camera_names': ['wrist']
+    },
+
+    'sim_fr5_task': {
+        'dataset_dir': DATA_DIR + '/sim_fr5_task', # 改成你电脑上的真实路径
+        'num_episodes': 50,  # 你一共有多少个 .hdf5 文件就填多少
+        'episode_len': 400,  # 你的数据大概一条有多少步？填个大概的最大值
+        'camera_names': ['wrist'] # 你的 hdf5 里图片叫什么名字，这里就填什么
     },
 
     'sim_transfer_cube_human':{
