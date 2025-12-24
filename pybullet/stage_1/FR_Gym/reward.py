@@ -33,7 +33,7 @@ def cal_success_reward(self, distance):
     # 机械臂关节碰撞目标
     for _ in target_contact_points:
         target_contact = True
-        other_contact = True
+        # other_contact = True
         # logger.info("机械臂接触目标！")
 
     # 碰撞桌子
@@ -147,8 +147,16 @@ def grasp_reward(self):
 
 def judge_success(self, distance, pose, success_dis, success_pose):
     '''判断成功或失败'''
+    target_contact_points = p.getContactPoints(bodyA=self.fr5, bodyB=self.target)
+    is_contact = len(target_contact_points) > 0
+
+    if is_contact:
+        self.success = True
+        logger.info("接触目标，判定成功！")
+        return
+
     if self.goalchange is True:
-        if distance < success_dis:
+        if distance < success_dis or is_contact:
             if pose > success_pose:
                 self.success = True
             else:

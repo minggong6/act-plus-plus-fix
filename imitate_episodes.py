@@ -247,6 +247,8 @@ def eval_bc(config, ckpt_name, save_episode=True, num_rollouts=50):
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
     onscreen_cam = 'angle'
+    if 'pybullet' in task_name:
+        onscreen_cam = 'top'
     vq = config['policy_config']['vq']
     actuator_config = config['actuator_config']
     use_actuator_net = actuator_config['actuator_network_dir'] is not None
