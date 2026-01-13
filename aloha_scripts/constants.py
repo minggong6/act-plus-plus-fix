@@ -2,7 +2,7 @@
 import pathlib
 import os
 
-DATA_DIR = os.path.expanduser('~/data/aloha/')
+DATA_DIR ='/home/dianrobot/PycharmProjects/act-plus-plus-fixed/data_set'
 TASK_CONFIGS = {
     'aloha_mobile_dummy':{
         'dataset_dir': DATA_DIR + '/aloha_mobile_dummy',

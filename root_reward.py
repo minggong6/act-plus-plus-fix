@@ -19,9 +19,9 @@ def cal_success_reward(self, distance):
     # 1.计算碰撞奖励
     # 若机械臂成功抓取目标，那么任务成功
     # 若机械臂发生其他碰撞（桌子或其他关节碰撞目标），那么任务失败
-    target_contact_points = p.getContactPoints(bodyA=self.fr5, bodyB=self.target)
-    table_contact_points = p.getContactPoints(bodyA=self.fr5, bodyB=self.table)
-    self_targettable_contact_points = p.getContactPoints(bodyA=self.fr5, bodyB=self.targettable)
+    target_contact_points = self.p.getContactPoints(bodyA=self.fr5, bodyB=self.target)
+    table_contact_points = self.p.getContactPoints(bodyA=self.fr5, bodyB=self.table)
+    self_targettable_contact_points = self.p.getContactPoints(bodyA=self.fr5, bodyB=self.targettable)
     # self_obstacle_contact_points = p.getContactPoints(bodyA=self.fr5, bodyB=self.obstacle)
 
     # 定义碰撞变量
@@ -81,7 +81,7 @@ def cal_success_reward(self, distance):
             logger.info("机械臂接触目标！ 执行步数：%s    距离目标:%s" % (self.step_num, distance))
 
     # 机械臂执行步数过多
-    if self.step_num > 100:
+    if self.step_num > 150:
         success_reward = - 100
         self.terminated = True
         logger.info("失败！执行步数过多！ 执行步数：%s    距离目标:%s" % (self.step_num, distance))
@@ -106,7 +106,7 @@ def cal_dis_reward(self, distance):
 def cal_pose_reward(self):
     '''姿态奖励'''
     # 计算夹爪的朝向
-    gripper_orientation = p.getLinkState(self.fr5, 7)[1]
+    gripper_orientation = self.p.getLinkState(self.fr5, 7)[1]
     gripper_orientation = R.from_quat(gripper_orientation)
     gripper_orientation = gripper_orientation.as_euler('xyz', degrees=True)
     # print("夹爪旋转角度： ",gripper_orientation)
@@ -125,7 +125,7 @@ def grasp_reward(self):
     pose_reward = cal_pose_reward(self)
     # 第一阶段设置为-5。
     # success_dis 第二阶段从0.02到0.01
-    judge_success(self, distance, pose_reward, success_dis=0.01, success_pose=-5)
+    judge_success(self, distance, pose_reward, success_dis=0.001, success_pose=-5)
 
     # 计算奖励
     success_reward = cal_success_reward(self, distance)
@@ -147,16 +147,14 @@ def grasp_reward(self):
 
 def judge_success(self, distance, pose, success_dis, success_pose):
     '''判断成功或失败'''
-    target_contact_points = p.getContactPoints(bodyA=self.fr5, bodyB=self.target)
-    is_contact = len(target_contact_points) > 0
-
-    if is_contact:
-         self.success = True
-         logger.info("接触目标，判定成功！")
-         return
+    # 夹爪中心和目标之间距离小于一定值，则任务成功
+    if distance < success_dis:
+        self.success = True
+        logger.info(f"夹爪中心接近目标(dist={distance:.4f} < {success_dis})，判定成功！")
+        return
 
     if self.goalchange is True:
-        if distance < success_dis: # or is_contact:
+        if distance < success_dis:
             if pose > success_pose:
                 self.success = True
             else:
@@ -178,12 +176,12 @@ def judge_success(self, distance, pose, success_dis, success_pose):
 
 def get_distance(self):
     '''判断机械臂与夹爪的距离'''
-    Gripper_posx = p.getLinkState(self.fr5, 6)[0][0]
-    Gripper_posy = p.getLinkState(self.fr5, 6)[0][1]
-    Gripper_posz = p.getLinkState(self.fr5, 6)[0][2]
+    Gripper_posx = self.p.getLinkState(self.fr5, 6)[0][0]
+    Gripper_posy = self.p.getLinkState(self.fr5, 6)[0][1]
+    Gripper_posz = self.p.getLinkState(self.fr5, 6)[0][2]
     relative_position = np.array([0, 0, 0.169])
     # 固定夹爪相对于机械臂末端的相对位置转换
-    rotation = R.from_quat(p.getLinkState(self.fr5, 7)[1])
+    rotation = R.from_quat(self.p.getLinkState(self.fr5, 7)[1])
     rotated_relative_position = rotation.apply(relative_position)
     gripper_centre_pos = [Gripper_posx, Gripper_posy, Gripper_posz] + rotated_relative_position
     # self.target_position = np.array(p.getBasePositionAndOrientation(self.target)[0])

@@ -7,7 +7,13 @@ data_local
 .vscode
 _wandb
 ckpt/
-
+training
+training_1
+training_2
+training_3
+training_4
+data_set
+dataset
 **/.DS_Store
 
 fuse.cfg
@@ -146,3 +152,5 @@ ckpts/
 *.png
 *.npy
 play.ipynb
+data_set/sim_fr5_task/episode_00000.hdf5
+*.ckpt

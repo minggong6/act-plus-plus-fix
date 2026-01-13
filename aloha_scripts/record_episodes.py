@@ -218,7 +218,7 @@ def capture_one_episode(dt, max_timesteps, camera_names, dataset_dir, dataset_na
         _ = obs.create_dataset('qvel', (max_timesteps, 14))
         _ = obs.create_dataset('effort', (max_timesteps, 14))
         _ = root.create_dataset('action', (max_timesteps, 14))
-        _ = root.create_dataset('base_action', (max_timesteps, 2))
+        #_ = root.create_dataset('base_action', (max_timesteps, 2))
         # _ = root.create_dataset('base_action_t265', (max_timesteps, 2))
 
         for name, array in data_dict.items():

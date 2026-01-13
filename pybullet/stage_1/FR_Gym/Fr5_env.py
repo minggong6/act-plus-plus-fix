@@ -174,6 +174,10 @@ class FR5_Env(gym.Env):
 
         self.reward, info = grasp_reward(self)
 
+        # 如果成功，重置机械臂
+        #if info.get('is_success', False):
+        #    self.reset()
+
         # observation计算
         self.get_observation()
 
@@ -217,9 +221,9 @@ class FR5_Env(gym.Env):
                 break
         # 重新设置目标位置
         #最好在0.15之外
-        self.goalx = np.random.uniform(0.1, 0.35, 1)[0]
+        self.goalx = np.random.uniform(0.25, 0.28, 1)[0]
         # self.goalx = 0.3
-        self.goaly = np.random.uniform(0.45, 0.6, 1)[0]
+        self.goaly = np.random.uniform(0.45, 0.5, 1)[0]
         # self.goaly = 0.5
         self.goalz = np.random.uniform(0.06, 0.1, 1)[0]
         # self.goalz = 0.08

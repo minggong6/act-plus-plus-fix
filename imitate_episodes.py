@@ -12,6 +12,7 @@ import wandb
 import time
 from torchvision import transforms
 
+
 from constants import FPS
 from constants import PUPPET_GRIPPER_JOINT_OPEN
 from utils import load_data # data functions
@@ -19,11 +20,10 @@ from utils import sample_box_pose, sample_insertion_pose # robot functions
 from utils import compute_dict_mean, set_seed, detach_dict, calibrate_linear_vel, postprocess_base_action # helper functions
 from policy import ACTPolicy, CNNMLPPolicy, DiffusionPolicy
 from visualize_episodes import save_videos
-
 from detr.models.latent_model import Latent_Model_Transformer
 
 from sim_env import BOX_POSE
-
+from fr5_scripts.fr5_env import FR5SimEnv
 import IPython
 e = IPython.embed
 
@@ -152,7 +152,7 @@ def main(args):
     config_path = os.path.join(ckpt_dir, 'config.pkl')
     expr_name = ckpt_dir.split('/')[-1]
     if not is_eval:
-        wandb.init(project="mobile-aloha2", reinit=True, entity="moma", name=expr_name)
+        wandb.init(project="mobile-aloha2", reinit=True, name=expr_name)
         wandb.config.update(config)
     with open(config_path, 'wb') as f:
         pickle.dump(config, f)
@@ -310,12 +310,15 @@ def eval_bc(config, ckpt_name, save_episode=True, num_rollouts=50):
         from aloha_scripts.real_env import make_real_env # requires aloha
         env = make_real_env(init_node=True, setup_robots=True, setup_base=True)
         env_max_reward = 0
+    elif 'fr5' in task_name:
+        from fr5_scripts.fr5_env import FR5RealEnv
+        env = FR5RealEnv(setup_robot=True, setup_camera=True)
+        env_max_reward = 0
     elif 'pybullet' in task_name:
         import sys
         sys.path.append(os.path.join(os.path.dirname(__file__), 'pybullet', 'stage_1', 'FR_Gym'))
         from Fr5_env import FR5_Env
         from pybullet_env_adapter import PyBulletACTAdapter
-        
         raw_env = FR5_Env(gui=True)
         env = PyBulletACTAdapter(raw_env)
         env_max_reward = 1
@@ -487,6 +490,17 @@ def eval_bc(config, ckpt_name, save_episode=True, num_rollouts=50):
                 qpos_list.append(qpos_numpy)
                 target_qpos_list.append(target_qpos)
                 rewards.append(ts.reward)
+
+                # Check for success and break if successful
+                if ts.reward == env_max_reward:
+                    print(f"Success detected at step {t}! Terminating episode.")
+                    break
+
+                # Check for timeout (exceeding 150 steps)
+                if t >= 150:
+                    print(f"Step count {t} exceeded 150. Terminating episode and resetting.")
+                    break
+
                 duration = time.time() - time1
                 sleep_time = max(0, DT - duration)
                 # print(sleep_time)

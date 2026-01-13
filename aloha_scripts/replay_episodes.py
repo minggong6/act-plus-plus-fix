@@ -31,8 +31,8 @@ def main(args):
     with h5py.File(dataset_path, 'r') as root:
         actions = root['/action'][()]
         base_actions = root['/base_action'][()]
-
-    if use_actuator_net:
+# Load actuator network
+    ''''if use_actuator_net:
         from train_actuator_network import ActuatorNetwork
         import torch
         import pickle
@@ -78,7 +78,7 @@ def main(args):
         plt.show()
     else:
         # processed_base_actions = smooth_base_action(base_actions)
-        processed_base_actions = base_actions
+        processed_base_actions = base_actions'''
 
     env = make_real_env(init_node=True, setup_base=True)
     env.reset()
